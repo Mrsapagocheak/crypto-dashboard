@@ -345,6 +345,15 @@ def main():
     flask_thread = threading.Thread(target=_run_flask, daemon=True)
     flask_thread.start()
 
+    # הפעל whale monitor בthread נפרד
+    try:
+        from whale_monitor import monitor as whale_monitor
+        whale_thread = threading.Thread(target=whale_monitor, daemon=True, name="whale-monitor")
+        whale_thread.start()
+        log.info("🐋 whale_monitor הופעל בthread נפרד")
+    except Exception as e:
+        log.warning(f"whale_monitor לא הופעל: {e}")
+
     log.info(f"מפעיל בוט עם מודל: {OPENROUTER_MODEL}")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
