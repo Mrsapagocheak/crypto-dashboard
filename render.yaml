@@ -1,0 +1,78 @@
+services:
+  # בוט טלגרם — Background Worker (לא Web Service!)
+  - type: worker
+    name: crypto-bot
+    runtime: python
+    repo: https://github.com/Mrsapagocheak/crypto-dashboard
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: anthropic/claude-sonnet-4-5
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: WHALE_WALLET
+        sync: false
+      - key: BYBIT_FUNDING_URL
+        value: https://api.bybit.com/v5/market/funding/history
+      - key: BINANCE_WS_LIQUIDATIONS
+        value: wss://fstream.binance.com/ws/!forceOrder@arr
+      - key: NEWS_RSS_COINDESK
+        value: https://www.coindesk.com/arc/outboundfeeds/rss/
+      - key: NEWS_RSS_COINTELEGRAPH
+        value: https://cointelegraph.com/rss
+      - key: MAX_DAILY_LOSS_PCT
+        value: "5"
+
+  # Whale Monitor — process נפרד
+  - type: worker
+    name: whale-monitor
+    runtime: python
+    repo: https://github.com/Mrsapagocheak/crypto-dashboard
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python whale_monitor.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: WHALE_WALLET
+        sync: false
+
+  # Liquidations Monitor — process נפרד
+  - type: worker
+    name: liquidations-monitor
+    runtime: python
+    repo: https://github.com/Mrsapagocheak/crypto-dashboard
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python liquidations_monitor.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: BINANCE_WS_LIQUIDATIONS
+        value: wss://fstream.binance.com/ws/!forceOrder@arr

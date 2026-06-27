@@ -1,0 +1,8 @@
+{
+  "name": "crypto-dashboard-manager",
+  "version": "0.1.0",
+  "description": "Manages the full build of a personal crypto intelligence dashboard — whale tracking, copy trading, live data. Knows all project phases and can execute autonomously, pausing for user approval at critical decisions.",
+  "author": {
+    "name": "Personal"
+  }
+}

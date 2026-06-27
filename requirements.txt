@@ -1,0 +1,17 @@
+# Telegram bot
+python-telegram-bot==20.7
+
+# Supabase
+supabase==2.3.4
+
+# HTTP
+requests==2.31.0
+
+# Environment
+python-dotenv==1.0.0
+
+# News RSS
+feedparser==6.0.11
+
+# WebSocket (liquidations_monitor.py)
+websockets==12.0
