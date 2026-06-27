@@ -3,15 +3,18 @@ bot.py — בוט טלגרם לדשבורד קריפטו
 - עונה על שאלות קריפטו בעברית דרך OpenRouter (claude-sonnet-4-5)
 - פקודות: /news /funding /whales /status /help
 - משולב עם: news_fetcher, funding_rates, whale_monitor, Supabase
+- Flask health endpoint על PORT (ל-Render free tier + UptimeRobot)
 """
 
 import os
 import asyncio
 import logging
+import threading
 import requests
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -47,6 +50,26 @@ try:
     db = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
 except Exception:
     db = None
+
+
+# ---------------------------------------------------------------------------
+# Flask health endpoint (מונע שינה ב-Render free tier)
+# ---------------------------------------------------------------------------
+
+_flask_app = Flask(__name__)
+
+@_flask_app.route("/health")
+def health():
+    return "OK", 200
+
+@_flask_app.route("/")
+def index():
+    return "🤖 Crypto Bot is running", 200
+
+def _run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    log.info(f"Health server on port {port}")
+    _flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 # ---------------------------------------------------------------------------
@@ -115,8 +138,6 @@ def ask_ai(question: str, context: str = "") -> str:
 def get_market_context() -> str:
     """בונה קונטקסט שוק עדכני לשאלות AI"""
     lines = []
-
-    # מחירי BTC + ETH
     try:
         for symbol in ["BTCUSDT", "ETHUSDT"]:
             r = requests.get(
@@ -128,15 +149,12 @@ def get_market_context() -> str:
             lines.append(f"{symbol.replace('USDT','')}: ${price:,.0f}")
     except Exception:
         pass
-
-    # Fear & Greed
     try:
         r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
         fng = r.json()["data"][0]
         lines.append(f"Fear & Greed: {fng['value']} ({fng['value_classification']})")
     except Exception:
         pass
-
     return "\n".join(lines) if lines else ""
 
 
@@ -145,7 +163,6 @@ def get_market_context() -> str:
 # ---------------------------------------------------------------------------
 
 def get_recent_whales(limit: int = 5) -> list[dict]:
-    """מביא חיסולי whale אחרונים מ-Supabase"""
     if not db:
         return []
     try:
@@ -204,33 +221,23 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """מביא חדשות קריפטו עם סינון אופציונלי"""
     keyword = " ".join(ctx.args) if ctx.args else None
     await update.message.reply_text("📰 מביא חדשות...")
-
     news = fetch_news(max_items=10, keyword_filter=keyword)
     if not news:
         await update.message.reply_text(
             f"📰 לא נמצאו חדשות{'  ל-' + keyword if keyword else ''}"
         )
         return
-
     msg = news_format(news, max_items=5)
-
-    # אם יש מילת סינון — בקש ניתוח AI
     if keyword and news:
         titles = "\n".join(f"- {n['title']}" for n in news[:5])
-        analysis = ask_ai(
-            f"נתח בקצרה את החדשות הבאות על {keyword}:",
-            context=titles,
-        )
+        analysis = ask_ai(f"נתח בקצרה את החדשות הבאות על {keyword}:", context=titles)
         msg += f"\n\n🤖 <b>ניתוח AI:</b>\n{analysis}"
-
     await update.message.reply_html(msg, disable_web_page_preview=True)
 
 
 async def cmd_funding(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """מביא funding rates מ-Bybit"""
     await update.message.reply_text("📊 מביא funding rates...")
     rates = get_all_funding_rates()
     msg = funding_format(rates)
@@ -238,62 +245,40 @@ async def cmd_funding(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_whales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """מביא תנועות whale אחרונות מ-Supabase"""
     rows = get_recent_whales(limit=5)
-
     if not rows:
         await update.message.reply_html(
             "🐋 אין תנועות whale שמורות עדיין.\n"
             "<i>whale_monitor.py צריך לרוץ ברקע</i>"
         )
         return
-
     lines = ["🐋 <b>תנועות Whale אחרונות</b>\n"]
     for row in rows:
         lines.append(format_whale_row(row))
         ts = row.get("created_at", "")[:16].replace("T", " ")
         lines.append(f"   🕐 {ts}\n")
-
     await update.message.reply_html("\n".join(lines))
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """בדיקת חיבורים לכל ה-APIs"""
     await update.message.reply_text("🔍 בודק שירותים...")
     results = []
-
-    # Binance
     try:
-        r = requests.get(
-            "https://api.binance.com/api/v3/ticker/price",
-            params={"symbol": "BTCUSDT"}, timeout=5,
-        )
+        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": "BTCUSDT"}, timeout=5)
         btc = float(r.json()["price"])
         results.append(f"✅ Binance — BTC: ${btc:,.0f}")
     except Exception as e:
         results.append(f"❌ Binance — {e}")
-
-    # Bybit
     try:
-        r = requests.get(
-            "https://api.bybit.com/v5/market/funding/history",
-            params={"category": "linear", "symbol": "BTCUSDT", "limit": 1},
-            timeout=5,
-        )
+        r = requests.get("https://api.bybit.com/v5/market/funding/history", params={"category": "linear", "symbol": "BTCUSDT", "limit": 1}, timeout=5)
         code = r.json().get("retCode", -1)
         results.append(f"✅ Bybit funding API" if code == 0 else f"❌ Bybit (code {code})")
     except Exception as e:
         results.append(f"❌ Bybit — {e}")
-
-    # Etherscan
     etherscan_key = os.getenv("ETHERSCAN_API_KEY", "")
     if etherscan_key:
         try:
-            r = requests.get(
-                "https://api.etherscan.io/api",
-                params={"module": "stats", "action": "ethprice", "apikey": etherscan_key},
-                timeout=5,
-            )
+            r = requests.get("https://api.etherscan.io/api", params={"module": "stats", "action": "ethprice", "apikey": etherscan_key}, timeout=5)
             data = r.json()
             if data.get("status") == "1":
                 results.append(f"✅ Etherscan — ETH: ${float(data['result']['ethusd']):,.0f}")
@@ -303,22 +288,14 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             results.append(f"❌ Etherscan — {e}")
     else:
         results.append("⚠️ Etherscan — API key חסר")
-
-    # OpenRouter
     if OPENROUTER_KEY:
         try:
-            r = requests.get(
-                "https://openrouter.ai/api/v1/models",
-                headers={"Authorization": f"Bearer {OPENROUTER_KEY}"},
-                timeout=5,
-            )
+            r = requests.get("https://openrouter.ai/api/v1/models", headers={"Authorization": f"Bearer {OPENROUTER_KEY}"}, timeout=5)
             results.append("✅ OpenRouter" if r.status_code == 200 else f"❌ OpenRouter (HTTP {r.status_code})")
         except Exception as e:
             results.append(f"❌ OpenRouter — {e}")
     else:
         results.append("⚠️ OpenRouter — API key חסר")
-
-    # Supabase
     if db:
         try:
             db.table("whale_txs").select("id").limit(1).execute()
@@ -327,48 +304,29 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             results.append(f"❌ Supabase — {e}")
     else:
         results.append("⚠️ Supabase — לא מחובר")
-
-    # RSS
     try:
         news = fetch_news(max_items=1)
         results.append(f"✅ RSS News — {len(news)} פריטים")
     except Exception as e:
         results.append(f"❌ RSS — {e}")
-
     now = datetime.now(timezone.utc).strftime("%H:%M UTC")
     msg = f"🔧 <b>סטטוס שירותים</b> ({now})\n\n" + "\n".join(results)
     await update.message.reply_html(msg)
 
 
-# ---------------------------------------------------------------------------
-# הודעות חופשיות → AI
-# ---------------------------------------------------------------------------
-
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """כל הודעה שאינה פקודה → תשובת AI"""
     question = update.message.text.strip()
     if not question:
         return
-
     await update.message.reply_text("💭 חושב...")
-
-    # בנה קונטקסט שוק
     context = get_market_context()
-
-    # קבל תשובת AI
     answer = ask_ai(question, context=context)
-
-    # שלח תשובה (חלק אותה אם ארוכה מדי)
     if len(answer) > 4000:
         for i in range(0, len(answer), 4000):
             await update.message.reply_text(answer[i:i+4000])
     else:
         await update.message.reply_text(answer)
 
-
-# ---------------------------------------------------------------------------
-# Error handler
-# ---------------------------------------------------------------------------
 
 async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE):
     log.error(f"שגיאה: {ctx.error}", exc_info=ctx.error)
@@ -383,21 +341,20 @@ def main():
         log.error("TELEGRAM_BOT_TOKEN לא מוגדר ב-.env")
         return
 
+    # הפעל Flask health server בthread נפרד
+    flask_thread = threading.Thread(target=_run_flask, daemon=True)
+    flask_thread.start()
+
     log.info(f"מפעיל בוט עם מודל: {OPENROUTER_MODEL}")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # פקודות
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("news", cmd_news))
     app.add_handler(CommandHandler("funding", cmd_funding))
     app.add_handler(CommandHandler("whales", cmd_whales))
     app.add_handler(CommandHandler("status", cmd_status))
-
-    # כל הודעה אחרת → AI
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
     app.add_error_handler(error_handler)
 
     log.info("✅ בוט פעיל — מחכה להודעות...")
