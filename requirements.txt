@@ -1,5 +1,5 @@
 # Telegram bot
-python-telegram-bot==21.10
+python-telegram-bot==20.7
 
 # Supabase
 supabase==2.3.4
